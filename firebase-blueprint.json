@@ -1,0 +1,241 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private profile for an authenticated inventory operator.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "roleLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "facilityName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "roleLabel",
+        "facilityName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory catalog item with pricing, supplier, and stock threshold rules.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "barcode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Peripherals",
+            "Accessories",
+            "Electronics",
+            "Packaging",
+            "Office Furniture",
+            "Hardware"
+          ]
+        },
+        "supplier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "purchasePrice": {
+          "type": "number"
+        },
+        "sellingPrice": {
+          "type": "number"
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "minStock": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000
+        },
+        "imageKey": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "storageLocation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "sku",
+        "category",
+        "supplier",
+        "purchasePrice",
+        "sellingPrice",
+        "quantity",
+        "minStock",
+        "unit",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StockTransaction": {
+      "title": "StockTransaction",
+      "description": "Immutable stock movement audit record tied atomically to a product quantity change.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "type": {
+          "type": "string",
+          "enum": ["in", "out"]
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "previousStock": {
+          "type": "number"
+        },
+        "resultingStock": {
+          "type": "number"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "productId",
+        "productName",
+        "sku",
+        "type",
+        "quantity",
+        "previousStock",
+        "resultingStock",
+        "reason",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile documents restricted strictly to the owning authenticated user."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Product catalog documents owned by an authenticated user."
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/StockTransaction" },
+      "description": "Append-only stock movement ledger entries owned by an authenticated user."
+    }
+  }
+}

@@ -1,0 +1,156 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'roleLabel', 'facilityName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'roleLabel', 'facilityName', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == request.auth.uid && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.roleLabel is string && data.roleLabel.size() >= 1 && data.roleLabel.size() <= 60
+        && data.facilityName is string && data.facilityName.size() >= 1 && data.facilityName.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(cat) {
+      return cat in ['Peripherals', 'Accessories', 'Electronics', 'Packaging', 'Office Furniture', 'Hardware'];
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'sku', 'category', 'supplier', 'purchasePrice', 'sellingPrice', 'quantity', 'minStock', 'unit', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'name', 'sku', 'barcode', 'category', 'supplier', 'purchasePrice', 'sellingPrice', 'quantity', 'minStock', 'unit', 'description', 'imageKey', 'storageLocation', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 40 && data.sku.matches('^[a-zA-Z0-9_\\-]+$')
+        && (!('barcode' in data) || (data.barcode is string && data.barcode.size() <= 40))
+        && data.category is string && isValidCategory(data.category)
+        && data.supplier is string && data.supplier.size() >= 1 && data.supplier.size() <= 100
+        && data.purchasePrice is number && data.purchasePrice >= 0 && data.purchasePrice <= 1000000
+        && data.sellingPrice is number && data.sellingPrice >= 0 && data.sellingPrice <= 1000000
+        && data.quantity is number && data.quantity >= 0 && data.quantity <= 10000000
+        && data.minStock is number && data.minStock >= 0 && data.minStock <= 1000000
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 30
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && (!('imageKey' in data) || (data.imageKey is string && data.imageKey.size() <= 60))
+        && (!('storageLocation' in data) || (data.storageLocation is string && data.storageLocation.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['ownerId', 'productId', 'productName', 'sku', 'type', 'quantity', 'previousStock', 'resultingStock', 'reason', 'createdAt'])
+        && data.keys().hasOnly(['ownerId', 'productId', 'productName', 'sku', 'type', 'quantity', 'previousStock', 'resultingStock', 'reason', 'reference', 'notes', 'createdAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.productId is string && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 40
+        && data.type in ['in', 'out']
+        && data.quantity is number && data.quantity > 0 && data.quantity <= 10000000
+        && data.previousStock is number && data.previousStock >= 0 && data.previousStock <= 10000000
+        && data.resultingStock is number && data.resultingStock >= 0 && data.resultingStock <= 10000000
+        && ((data.type == 'in' && data.resultingStock == data.previousStock + data.quantity) ||
+            (data.type == 'out' && data.resultingStock == data.previousStock - data.quantity))
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 100
+        && (!('reference' in data) || (data.reference is string && data.reference.size() <= 60))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && data.createdAt is timestamp;
+    }
+
+    // Users collection: strict PII isolation (owner read/write only)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && userId == request.auth.uid
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'roleLabel', 'facilityName', 'email', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // Products collection: strict tenant ownership + schema validation
+    match /products/{productId} {
+      allow get: if isSignedIn() && isValidId(productId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(productId)
+        && existing().ownerId == request.auth.uid
+        && isValidProduct(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Edit product catalog details
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'sku', 'barcode', 'category', 'supplier',
+            'purchasePrice', 'sellingPrice', 'quantity', 'minStock',
+            'unit', 'description', 'imageKey', 'storageLocation', 'updatedAt'
+          ]) ||
+          // Action: Stock movement adjustment
+          incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt'])
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(productId)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // Transactions collection: append-only ledger synchronized with product
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && isValidId(transactionId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
+        && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.ownerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantity == incoming().resultingStock;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
