@@ -1,23 +1,20 @@
-import { User } from 'firebase/auth';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  onSnapshot,
-  query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+/**
+ * =====================================================================================
+ * SmartStock AI - Supabase Inventory Service
+ * =====================================================================================
+ * 
+ * Supabase PostgreSQL queries and Supabase Realtime channels.
+ * Supabase Realtime channels.
+ * =====================================================================================
+ */
+
+import { supabase } from '../../supabase/supabase';
 import {
   Product,
   ProductInput,
   StockMovementInput,
   StockTransaction,
+  toAppTimestamp,
   UserProfile,
   VALIDATION_LIMITS,
 } from '../types/inventory';
@@ -35,7 +32,59 @@ function sanitizeSku(sku: string): string {
   return cleaned || `SKU-${Date.now().toString(36).toUpperCase()}`;
 }
 
-function buildProductPayload(uid: string, input: ProductInput) {
+export function mapProductRow(row: any): Product {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    name: row.name,
+    sku: row.sku,
+    barcode: row.barcode ?? undefined,
+    category: row.category,
+    supplier: row.supplier,
+    purchasePrice: Number(row.purchase_price) || 0,
+    sellingPrice: Number(row.selling_price) || 0,
+    quantity: Number(row.quantity) || 0,
+    minStock: Number(row.min_stock) || 0,
+    unit: row.unit,
+    description: row.description ?? undefined,
+    imageKey: row.image_key ?? undefined,
+    storageLocation: row.storage_location ?? undefined,
+    createdAt: toAppTimestamp(row.created_at),
+    updatedAt: toAppTimestamp(row.updated_at),
+  };
+}
+
+export function mapTransactionRow(row: any): StockTransaction {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    productId: row.product_id,
+    productName: row.product_name,
+    sku: row.sku,
+    type: row.type,
+    quantity: Number(row.quantity) || 0,
+    previousStock: Number(row.previous_stock) || 0,
+    resultingStock: Number(row.resulting_stock) || 0,
+    reason: row.reason,
+    reference: row.reference ?? undefined,
+    notes: row.notes ?? undefined,
+    createdAt: toAppTimestamp(row.created_at),
+  };
+}
+
+export function mapProfileRow(row: any): UserProfile {
+  return {
+    uid: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    roleLabel: row.role_label,
+    facilityName: row.facility_name,
+    createdAt: toAppTimestamp(row.created_at),
+    updatedAt: toAppTimestamp(row.updated_at),
+  };
+}
+
+function buildProductInsertPayload(uid: string, input: ProductInput) {
   const name = sanitizeString(input.name, VALIDATION_LIMITS.NAME_MAX);
   const sku = sanitizeSku(input.sku);
   const supplier = sanitizeString(input.supplier, VALIDATION_LIMITS.SUPPLIER_MAX);
@@ -56,157 +105,210 @@ function buildProductPayload(uid: string, input: ProductInput) {
   const quantity = Math.max(0, Math.round(Number(input.quantity) || 0));
   const minStock = Math.max(0, Math.round(Number(input.minStock) || 0));
 
-  const payload: Record<string, unknown> = {
-    ownerId: uid,
+  return {
+    owner_id: uid,
     name,
     sku,
     category: input.category,
     supplier,
-    purchasePrice,
-    sellingPrice,
+    purchase_price: purchasePrice,
+    selling_price: sellingPrice,
     quantity,
-    minStock,
+    min_stock: minStock,
     unit,
+    barcode: barcode || null,
+    description: description || null,
+    image_key: imageKey || null,
+    storage_location: storageLocation || null,
   };
-
-  if (barcode) payload.barcode = barcode;
-  if (description) payload.description = description;
-  if (imageKey) payload.imageKey = imageKey;
-  if (storageLocation) payload.storageLocation = storageLocation;
-
-  return { payload, name, sku, quantity };
 }
 
-export async function ensureUserProfile(user: User): Promise<UserProfile> {
-  const userPath = `users/${user.uid}`;
-  const userRef = doc(db, 'users', user.uid);
-  try {
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      return snap.data() as UserProfile;
-    }
-
-    const displayName = sanitizeString(
-      user.displayName || user.email?.split('@')[0] || 'Operations Lead',
-      80,
-    );
-    const email = sanitizeString(user.email || 'ops@smartstock.local', 160);
-
-    await setDoc(userRef, {
-      uid: user.uid,
-      email,
-      displayName,
-      roleLabel: 'Store Ops Lead',
-      facilityName: 'Apex Retail Outlet',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    const created = await getDoc(userRef);
-    return created.data() as UserProfile;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, userPath);
+export async function ensureUserProfile(user: {
+  id?: string;
+  uid?: string;
+  email?: string;
+  displayName?: string;
+  user_metadata?: Record<string, unknown>;
+}): Promise<UserProfile> {
+  const userId = user.id || user.uid;
+  if (!userId) {
+    throw new Error('User ID is required to fetch or create user profile.');
   }
+
+  const { data: existing, error: fetchErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (!fetchErr && existing) {
+    return mapProfileRow(existing);
+  }
+
+  const email = user.email || `${userId.slice(0, 8)}@smartstock.local`;
+  const displayName = sanitizeString(
+    user.displayName ||
+    (user.user_metadata?.full_name as string) ||
+    (user.user_metadata?.displayName as string) ||
+    email.split('@')[0] ||
+    'Operations Lead',
+    80,
+  );
+
+  const newProfile = {
+    id: userId,
+    email,
+    display_name: displayName,
+    role_label: 'Store Ops Lead',
+    facility_name: 'Apex Retail Outlet',
+  };
+
+  const { data: created, error: insertErr } = await supabase
+    .from('profiles')
+    .upsert(newProfile)
+    .select('*')
+    .single();
+
+  if (insertErr || !created) {
+    throw insertErr || new Error('Failed to create user profile in Supabase.');
+  }
+
+  return mapProfileRow(created);
 }
 
 export function subscribeToProducts(
   uid: string,
   onData: (products: Product[]) => void,
   onError?: (err: Error) => void,
-) {
-  const q = query(collection(db, 'products'), where('ownerId', '==', uid));
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const items: Product[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Product, 'id'>),
-      }));
-      items.sort((a, b) => {
-        const aTime = a.updatedAt?.toMillis?.() ?? a.createdAt?.toMillis?.() ?? 0;
-        const bTime = b.updatedAt?.toMillis?.() ?? b.createdAt?.toMillis?.() ?? 0;
-        return bTime - aTime;
-      });
-      onData(items);
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, 'products');
-      } catch (wrapped) {
-        if (onError && wrapped instanceof Error) {
-          onError(wrapped);
-        }
+): () => void {
+  let isMounted = true;
+
+  const fetchItems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('owner_id', uid)
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+      if (isMounted) {
+        onData((data || []).map(mapProductRow));
       }
-    },
-  );
+    } catch (err) {
+      if (isMounted && onError && err instanceof Error) {
+        onError(err);
+      }
+    }
+  };
+
+  fetchItems();
+
+  const channel = supabase
+    .channel(`products:sub:${uid}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'products',
+        filter: `owner_id=eq.${uid}`,
+      },
+      () => {
+        fetchItems();
+      },
+    )
+    .subscribe();
+
+  return () => {
+    isMounted = false;
+    supabase.removeChannel(channel);
+  };
 }
 
 export function subscribeToTransactions(
   uid: string,
   onData: (transactions: StockTransaction[]) => void,
   onError?: (err: Error) => void,
-) {
-  const q = query(collection(db, 'transactions'), where('ownerId', '==', uid));
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const items: StockTransaction[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<StockTransaction, 'id'>),
-      }));
-      items.sort((a, b) => {
-        const aTime = a.createdAt?.toMillis?.() ?? 0;
-        const bTime = b.createdAt?.toMillis?.() ?? 0;
-        return bTime - aTime;
-      });
-      onData(items);
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, 'transactions');
-      } catch (wrapped) {
-        if (onError && wrapped instanceof Error) {
-          onError(wrapped);
-        }
+): () => void {
+  let isMounted = true;
+
+  const fetchItems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('*')
+        .eq('owner_id', uid)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (isMounted) {
+        onData((data || []).map(mapTransactionRow));
       }
-    },
-  );
+    } catch (err) {
+      if (isMounted && onError && err instanceof Error) {
+        onError(err);
+      }
+    }
+  };
+
+  fetchItems();
+
+  const channel = supabase
+    .channel(`transactions:sub:${uid}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'stock_transactions',
+        filter: `owner_id=eq.${uid}`,
+      },
+      () => {
+        fetchItems();
+      },
+    )
+    .subscribe();
+
+  return () => {
+    isMounted = false;
+    supabase.removeChannel(channel);
+  };
 }
 
 export async function createProduct(uid: string, input: ProductInput): Promise<string> {
-  const productRef = doc(collection(db, 'products'));
-  const { payload, name, sku, quantity } = buildProductPayload(uid, input);
+  const insertPayload = buildProductInsertPayload(uid, input);
 
-  try {
-    const batch = writeBatch(db);
-    batch.set(productRef, {
-      ...payload,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+  const { data: createdProduct, error: prodErr } = await supabase
+    .from('products')
+    .insert(insertPayload)
+    .select('id, name, sku, quantity')
+    .single();
+
+  if (prodErr || !createdProduct) {
+    throw prodErr || new Error('Failed to create product in Supabase.');
+  }
+
+  if (createdProduct.quantity > 0) {
+    const { error: txErr } = await supabase.from('stock_transactions').insert({
+      owner_id: uid,
+      product_id: createdProduct.id,
+      product_name: createdProduct.name,
+      sku: createdProduct.sku,
+      type: 'in',
+      quantity: createdProduct.quantity,
+      previous_stock: 0,
+      resulting_stock: createdProduct.quantity,
+      reason: 'Initial Catalog Stock',
+      reference: 'INIT-ENTRY',
     });
 
-    if (quantity > 0) {
-      const txRef = doc(collection(db, 'transactions'));
-      batch.set(txRef, {
-        ownerId: uid,
-        productId: productRef.id,
-        productName: name,
-        sku,
-        type: 'in',
-        quantity,
-        previousStock: 0,
-        resultingStock: quantity,
-        reason: 'Initial Catalog Stock',
-        reference: 'INIT-ENTRY',
-        createdAt: serverTimestamp(),
-      });
+    if (txErr) {
+      console.warn('Initial stock transaction record warning:', txErr);
     }
-
-    await batch.commit();
-    return productRef.id;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, `products/${productRef.id}`);
   }
+
+  return createdProduct.id;
 }
 
 export async function updateProduct(
@@ -214,48 +316,41 @@ export async function updateProduct(
   existingProduct: Product,
   input: ProductInput,
 ): Promise<void> {
-  const productPath = `products/${existingProduct.id}`;
-  const productRef = doc(db, 'products', existingProduct.id);
-  const { payload, name, sku, quantity } = buildProductPayload(uid, input);
+  const rawPayload = buildProductInsertPayload(uid, input);
+  const { owner_id: _ignoredOwner, ...updatePayload } = rawPayload;
 
-  try {
-    const batch = writeBatch(db);
-    batch.set(productRef, {
-      ...payload,
-      createdAt: existingProduct.createdAt ?? serverTimestamp(),
-      updatedAt: serverTimestamp(),
+  const { error: updateErr } = await supabase
+    .from('products')
+    .update(updatePayload)
+    .eq('id', existingProduct.id)
+    .eq('owner_id', uid);
+
+  if (updateErr) {
+    throw updateErr;
+  }
+
+  const newQty = updatePayload.quantity;
+  if (newQty !== existingProduct.quantity) {
+    const diff = newQty - existingProduct.quantity;
+    await supabase.from('stock_transactions').insert({
+      owner_id: uid,
+      product_id: existingProduct.id,
+      product_name: updatePayload.name,
+      sku: updatePayload.sku,
+      type: diff > 0 ? 'in' : 'out',
+      quantity: Math.abs(diff),
+      previous_stock: existingProduct.quantity,
+      resulting_stock: newQty,
+      reason: 'Manual Catalog Stock Edit',
+      reference: 'EDIT-SYNC',
     });
-
-    if (quantity !== existingProduct.quantity) {
-      const diff = quantity - existingProduct.quantity;
-      const txRef = doc(collection(db, 'transactions'));
-      batch.set(txRef, {
-        ownerId: uid,
-        productId: existingProduct.id,
-        productName: name,
-        sku,
-        type: diff > 0 ? 'in' : 'out',
-        quantity: Math.abs(diff),
-        previousStock: existingProduct.quantity,
-        resultingStock: quantity,
-        reason: 'Manual Catalog Stock Edit',
-        reference: 'EDIT-SYNC',
-        createdAt: serverTimestamp(),
-      });
-    }
-
-    await batch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, productPath);
   }
 }
 
 export async function deleteProduct(productId: string): Promise<void> {
-  const productPath = `products/${productId}`;
-  try {
-    await deleteDoc(doc(db, 'products', productId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, productPath);
+  const { error } = await supabase.from('products').delete().eq('id', productId);
+  if (error) {
+    throw error;
   }
 }
 
@@ -268,68 +363,84 @@ export async function recordStockMovement(
     throw new Error('Adjustment quantity must be greater than zero.');
   }
 
-  const productRef = doc(db, 'products', input.productId);
-  const txRef = doc(collection(db, 'transactions'));
   const reason =
     sanitizeString(input.reason, VALIDATION_LIMITS.REASON_MAX) ||
     (input.type === 'in' ? 'Purchase Order Delivery' : 'Customer Sale / Dispatch');
-  const reference = sanitizeString(input.reference, VALIDATION_LIMITS.REFERENCE_MAX);
-  const notes = sanitizeString(input.notes, VALIDATION_LIMITS.NOTES_MAX);
+  const reference = sanitizeString(input.reference, VALIDATION_LIMITS.REFERENCE_MAX) || null;
+  const notes = sanitizeString(input.notes, VALIDATION_LIMITS.NOTES_MAX) || null;
 
+  // 1. Try atomic PostgreSQL RPC stored procedure first
   try {
-    const resultingStock = await runTransaction(db, async (transaction) => {
-      const productSnap = await transaction.get(productRef);
-      if (!productSnap.exists()) {
-        throw new Error('Selected product no longer exists.');
-      }
+    const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+      'record_stock_movement_atomic',
+      {
+        p_owner_id: uid,
+        p_product_id: input.productId,
+        p_type: input.type,
+        p_quantity: qty,
+        p_reason: reason,
+        p_reference: reference,
+        p_notes: notes,
+      },
+    );
 
-      const product = productSnap.data() as Omit<Product, 'id'>;
-      const previousStock = product.quantity;
-      const nextStock =
-        input.type === 'in' ? previousStock + qty : previousStock - qty;
-
-      if (nextStock < 0) {
-        throw new Error(
-          `Insufficient stock for ${product.name}. Available: ${previousStock} units.`,
-        );
-      }
-
-      transaction.update(productRef, {
-        quantity: nextStock,
-        updatedAt: serverTimestamp(),
-      });
-
-      const txPayload: Record<string, unknown> = {
-        ownerId: uid,
-        productId: input.productId,
-        productName: sanitizeString(product.name, VALIDATION_LIMITS.NAME_MAX),
-        sku: sanitizeString(product.sku, VALIDATION_LIMITS.SKU_MAX),
-        type: input.type,
-        quantity: qty,
-        previousStock,
-        resultingStock: nextStock,
-        reason,
-        createdAt: serverTimestamp(),
-      };
-
-      if (reference) txPayload.reference = reference;
-      if (notes) txPayload.notes = notes;
-
-      transaction.set(txRef, txPayload);
-      return nextStock;
-    });
-
-    return resultingStock;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.startsWith('Insufficient stock') ||
-        error.message.startsWith('Selected product'))
-    ) {
-      throw error;
+    if (!rpcErr && rpcResult) {
+      const res = rpcResult as { resultingStock?: number; resulting_stock?: number };
+      return Number(res.resultingStock ?? res.resulting_stock ?? 0);
     }
-    handleFirestoreError(error, OperationType.WRITE, `products/${input.productId}`);
+
+    if (rpcErr && !rpcErr.message?.toLowerCase().includes('does not exist')) {
+      throw new Error(rpcErr.message);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.toLowerCase().includes('insufficient stock')) {
+      throw err;
+    }
   }
+
+  // 2. Fallback: Sequential client-side fetch, validate, and update
+  const { data: product, error: fetchErr } = await supabase
+    .from('products')
+    .select('id, name, sku, quantity')
+    .eq('id', input.productId)
+    .eq('owner_id', uid)
+    .single();
+
+  if (fetchErr || !product) {
+    throw new Error('Selected product no longer exists.');
+  }
+
+  const previousStock = Number(product.quantity) || 0;
+  const nextStock = input.type === 'in' ? previousStock + qty : previousStock - qty;
+
+  if (nextStock < 0) {
+    throw new Error(`Insufficient stock for ${product.name}. Available: ${previousStock} units.`);
+  }
+
+  const { error: updateErr } = await supabase
+    .from('products')
+    .update({ quantity: nextStock })
+    .eq('id', input.productId);
+
+  if (updateErr) throw updateErr;
+
+  const { error: txErr } = await supabase.from('stock_transactions').insert({
+    owner_id: uid,
+    product_id: input.productId,
+    product_name: sanitizeString(product.name, VALIDATION_LIMITS.NAME_MAX),
+    sku: sanitizeString(product.sku, VALIDATION_LIMITS.SKU_MAX),
+    type: input.type,
+    quantity: qty,
+    previous_stock: previousStock,
+    resulting_stock: nextStock,
+    reason,
+    reference,
+    notes,
+  });
+
+  if (txErr) throw txErr;
+
+  return nextStock;
 }
 
 export async function seedStarterCatalog(uid: string): Promise<void> {
@@ -425,37 +536,29 @@ export async function seedStarterCatalog(uid: string): Promise<void> {
     },
   ];
 
-  try {
-    const batch = writeBatch(db);
-    starterProducts.forEach((item, index) => {
-      const prodRef = doc(collection(db, 'products'));
-      const { payload, name, sku, quantity } = buildProductPayload(uid, item);
-      batch.set(prodRef, {
-        ...payload,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+  for (let i = 0; i < starterProducts.length; i++) {
+    const item = starterProducts[i];
+    const insertPayload = buildProductInsertPayload(uid, item);
+
+    const { data: created, error } = await supabase
+      .from('products')
+      .insert(insertPayload)
+      .select('id, name, sku, quantity')
+      .single();
+
+    if (!error && created && created.quantity > 0) {
+      await supabase.from('stock_transactions').insert({
+        owner_id: uid,
+        product_id: created.id,
+        product_name: created.name,
+        sku: created.sku,
+        type: 'in',
+        quantity: created.quantity,
+        previous_stock: 0,
+        resulting_stock: created.quantity,
+        reason: 'Opening Warehouse Balance',
+        reference: `PO-2026-0${i + 1}`,
       });
-
-      if (quantity > 0) {
-        const txRef = doc(collection(db, 'transactions'));
-        batch.set(txRef, {
-          ownerId: uid,
-          productId: prodRef.id,
-          productName: name,
-          sku,
-          type: 'in',
-          quantity,
-          previousStock: 0,
-          resultingStock: quantity,
-          reason: 'Opening Warehouse Balance',
-          reference: `PO-2026-0${index + 1}`,
-          createdAt: serverTimestamp(),
-        });
-      }
-    });
-
-    await batch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'products');
+    }
   }
 }

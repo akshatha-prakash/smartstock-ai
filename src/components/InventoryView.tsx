@@ -373,7 +373,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               No products in your catalog yet
             </h3>
             <p className="text-sm text-slate-500 max-w-md mx-auto mb-5">
-              Create your first inventory SKU or load our starter catalog into your Cloud Firestore database.
+              Create your first inventory SKU or load our starter catalog into your Supabase database.
             </p>
             <div className="flex items-center justify-center gap-3">
               <button

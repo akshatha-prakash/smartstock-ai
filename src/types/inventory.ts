@@ -1,5 +1,3 @@
-import { Timestamp } from 'firebase/firestore';
-
 export type ProductCategory =
   | 'Peripherals'
   | 'Accessories'
@@ -40,6 +38,36 @@ export const VALIDATION_LIMITS = {
   NOTES_MAX: 300,
 } as const;
 
+/**
+ * Compatible Timestamp object providing .toDate(), .toMillis(), .toISOString()
+ * to seamlessly support all existing charts, audit tables, and date formatters.
+ */
+export interface AppTimestamp {
+  seconds: number;
+  nanoseconds: number;
+  toDate: () => Date;
+  toMillis: () => number;
+  toISOString: () => string;
+}
+
+export type Timestamp = AppTimestamp;
+
+export function toAppTimestamp(value: string | number | Date | AppTimestamp | null | undefined): AppTimestamp | null {
+  if (!value) return null;
+  if (typeof value === 'object' && 'toDate' in value && typeof (value as any).toDate === 'function') {
+    return value as AppTimestamp;
+  }
+  const d = typeof value === 'string' || typeof value === 'number' ? new Date(value) : (value as Date);
+  const ms = isNaN(d.getTime()) ? Date.now() : d.getTime();
+  return {
+    seconds: Math.floor(ms / 1000),
+    nanoseconds: (ms % 1000) * 1e6,
+    toDate: () => new Date(ms),
+    toMillis: () => ms,
+    toISOString: () => new Date(ms).toISOString(),
+  };
+}
+
 export interface Product {
   id: string;
   ownerId: string;
@@ -56,8 +84,8 @@ export interface Product {
   description?: string;
   imageKey?: string;
   storageLocation?: string;
-  createdAt: Timestamp | null;
-  updatedAt: Timestamp | null;
+  createdAt: AppTimestamp | null;
+  updatedAt: AppTimestamp | null;
 }
 
 export interface ProductInput {
@@ -91,7 +119,7 @@ export interface StockTransaction {
   reason: string;
   reference?: string;
   notes?: string;
-  createdAt: Timestamp | null;
+  createdAt: AppTimestamp | null;
 }
 
 export interface StockMovementInput {
@@ -109,8 +137,8 @@ export interface UserProfile {
   displayName: string;
   roleLabel: string;
   facilityName: string;
-  createdAt: Timestamp | null;
-  updatedAt: Timestamp | null;
+  createdAt: AppTimestamp | null;
+  updatedAt: AppTimestamp | null;
 }
 
 export type AppPage =

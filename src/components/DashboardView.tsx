@@ -325,7 +325,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              Your Cloud Firestore catalog is currently empty
+              Your Supabase catalog is currently empty
             </h2>
             <p className="text-sm text-slate-500 mt-1">
               Add your first product manually or load 6 starter SKUs into your database to test stock movements right away.

@@ -1,13 +1,5 @@
 import React, { useState } from 'react';
 import {
-  createUserWithEmailAndPassword,
-  sendEmailVerification,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  updateProfile,
-} from 'firebase/auth';
-import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
@@ -18,7 +10,7 @@ import {
   ShieldCheck,
   User as UserIcon,
 } from 'lucide-react';
-import { auth, googleProvider } from '../lib/firebase';
+import { supabase } from '../../supabase/supabase';
 
 export const LoginView: React.FC = () => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -32,25 +24,24 @@ export const LoginView: React.FC = () => {
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   const mapAuthError = (err: unknown): string => {
-    const code = (err as { code?: string })?.code ?? '';
-    switch (code) {
-      case 'auth/operation-not-allowed':
-        return 'Email/Password sign-in is not yet enabled in Firebase Console (Authentication → Sign-in method). Please enable it there or click "Continue with Google" above.';
-      case 'auth/invalid-credential':
-      case 'auth/wrong-password':
-      case 'auth/user-not-found':
-        return 'Invalid email or password. Please check your credentials and try again.';
-      case 'auth/email-already-in-use':
-        return 'An account with this email already exists. Switch to Sign In instead.';
-      case 'auth/weak-password':
-        return 'Password must be at least 6 characters long.';
-      case 'auth/invalid-email':
-        return 'Please enter a valid email address.';
-      case 'auth/popup-closed-by-user':
-        return 'Google sign-in popup was closed before completion.';
-      default:
-        return err instanceof Error ? err.message : 'Authentication failed. Please try again.';
+    const raw = err instanceof Error ? err.message : String(err);
+    const lower = raw.toLowerCase();
+    if (lower.includes('invalid login credentials') || lower.includes('invalid credential')) {
+      return 'Invalid email or password. Please check your credentials and try again.';
     }
+    if (lower.includes('user already registered') || lower.includes('already registered')) {
+      return 'An account with this email already exists. Switch to Sign In instead.';
+    }
+    if (lower.includes('password should be at least')) {
+      return 'Password must be at least 6 characters long.';
+    }
+    if (lower.includes('invalid email') || lower.includes('valid email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (lower.includes('email not confirmed')) {
+      return 'Please confirm your email address before signing in. Check your inbox for the confirmation link.';
+    }
+    return raw || 'Authentication failed. Please try again.';
   };
 
   const handleGoogleAuth = async () => {
@@ -58,10 +49,15 @@ export const LoginView: React.FC = () => {
     setInfoMsg(null);
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+        },
+      });
+      if (error) throw error;
     } catch (err) {
       setErrorMsg(mapAuthError(err));
-    } finally {
       setLoading(false);
     }
   };
@@ -78,14 +74,31 @@ export const LoginView: React.FC = () => {
     setLoading(true);
     try {
       if (mode === 'signin') {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (error) throw error;
       } else {
-        const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-        if (fullName.trim()) {
-          await updateProfile(cred.user, { displayName: fullName.trim() });
+        const name = fullName.trim() || email.trim().split('@')[0];
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: name,
+              displayName: name,
+              facilityName: 'Apex Retail Outlet',
+            },
+          },
+        });
+        if (error) throw error;
+
+        if (data?.session) {
+          setInfoMsg('Account created successfully! Redirecting...');
+        } else if (data?.user) {
+          setInfoMsg('Account created! Please check your inbox to verify your email address.');
         }
-        await sendEmailVerification(cred.user);
-        setInfoMsg('Account created! Please check your inbox to verify your email address.');
       }
     } catch (err) {
       setErrorMsg(mapAuthError(err));
@@ -103,7 +116,10 @@ export const LoginView: React.FC = () => {
     }
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email.trim());
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined,
+      });
+      if (error) throw error;
       setInfoMsg('Password reset link sent to your email address.');
     } catch (err) {
       setErrorMsg(mapAuthError(err));
@@ -200,7 +216,7 @@ export const LoginView: React.FC = () => {
             type="button"
             disabled={loading}
             onClick={handleGoogleAuth}
-            className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-800 transition-colors disabled:opacity-60 mb-4"
+            className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-800 transition-colors disabled:opacity-60 mb-4 cursor-pointer"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
               <path
@@ -268,7 +284,7 @@ export const LoginView: React.FC = () => {
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-slate-700">Email Address</label>
                 <span className="text-[11px] font-medium text-slate-400">
-                  Firebase Auth
+                  Supabase Auth
                 </span>
               </div>
               <div className="relative">
@@ -323,7 +339,7 @@ export const LoginView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="font-semibold text-teal-700 hover:text-teal-800"
+                  className="font-semibold text-teal-700 hover:text-teal-800 cursor-pointer"
                 >
                   Forgot password?
                 </button>
@@ -333,7 +349,7 @@ export const LoginView: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5E] text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+              className="w-full py-2.5 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5E] text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer"
             >
               <span>
                 {loading
@@ -348,7 +364,7 @@ export const LoginView: React.FC = () => {
 
           <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500">
             <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0" />
-            <span>Protected by Firebase Authentication & Cloud Firestore</span>
+            <span>Protected by Supabase Authentication & PostgreSQL Database</span>
           </div>
         </div>
       </div>

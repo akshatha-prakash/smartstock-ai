@@ -189,7 +189,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <div className="text-xs font-semibold text-teal-700 mb-1">
-            Operations Telemetry · Cloud Firestore
+            Operations Telemetry · Supabase Database
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             Reports &amp; Analytics

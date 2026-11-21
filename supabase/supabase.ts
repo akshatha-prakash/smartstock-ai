@@ -20,6 +20,35 @@
  */
 
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import {
+  AppTimestamp,
+  Product,
+  ProductCategory,
+  ProductInput,
+  StockMovementInput,
+  StockStatus,
+  StockTransaction,
+  toAppTimestamp,
+  TransactionType,
+  UserProfile,
+  VALIDATION_LIMITS,
+} from '../src/types/inventory';
+
+export {
+  toAppTimestamp,
+  VALIDATION_LIMITS,
+};
+export type {
+  AppTimestamp,
+  Product,
+  ProductCategory,
+  ProductInput,
+  StockMovementInput,
+  StockStatus,
+  StockTransaction,
+  TransactionType,
+  UserProfile,
+};
 
 // =====================================================================================
 // 1. SUPABASE POSTGRESQL SCHEMA DDL & SQL QUERIES
@@ -180,8 +209,8 @@ BEGIN
     NEW.id,
     NEW.email,
     COALESCE(
-      NEW.raw_user_meta_data->>'displayName',
       NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'displayName',
       split_part(NEW.email, '@', 1)
     )
   )
@@ -352,39 +381,8 @@ LIMIT 25;
 `;
 
 // =====================================================================================
-// 2. DOMAIN TYPES AND LIMITS
+// 2. DATABASE SCHEMA TYPES
 // =====================================================================================
-
-export type ProductCategory =
-  | 'Peripherals'
-  | 'Accessories'
-  | 'Electronics'
-  | 'Packaging'
-  | 'Office Furniture'
-  | 'Hardware';
-
-export const PRODUCT_CATEGORIES: ProductCategory[] = [
-  'Peripherals',
-  'Accessories',
-  'Electronics',
-  'Packaging',
-  'Office Furniture',
-  'Hardware',
-];
-
-export const VALIDATION_LIMITS = {
-  NAME_MAX: 120,
-  SKU_MAX: 40,
-  SKU_PATTERN: /^[a-zA-Z0-9_\-]+$/,
-  BARCODE_MAX: 40,
-  SUPPLIER_MAX: 100,
-  UNIT_MAX: 30,
-  DESCRIPTION_MAX: 1000,
-  STORAGE_MAX: 80,
-  REASON_MAX: 100,
-  REFERENCE_MAX: 60,
-  NOTES_MAX: 300,
-} as const;
 
 export interface Database {
   public: {
@@ -549,87 +547,6 @@ export interface Database {
   };
 }
 
-export interface Product {
-  id: string;
-  ownerId: string;
-  name: string;
-  sku: string;
-  barcode?: string;
-  category: ProductCategory;
-  supplier: string;
-  purchasePrice: number;
-  sellingPrice: number;
-  quantity: number;
-  minStock: number;
-  unit: string;
-  description?: string;
-  imageKey?: string;
-  storageLocation?: string;
-  createdAt: string | null;
-  updatedAt: string | null;
-}
-
-export interface ProductInput {
-  name: string;
-  sku: string;
-  barcode?: string;
-  category: ProductCategory;
-  supplier: string;
-  purchasePrice: number;
-  sellingPrice: number;
-  quantity: number;
-  minStock: number;
-  unit: string;
-  description?: string;
-  imageKey?: string;
-  storageLocation?: string;
-}
-
-export type TransactionType = 'in' | 'out';
-
-export interface StockTransaction {
-  id: string;
-  ownerId: string;
-  productId: string;
-  productName: string;
-  sku: string;
-  type: TransactionType;
-  quantity: number;
-  previousStock: number;
-  resultingStock: number;
-  reason: string;
-  reference?: string;
-  notes?: string;
-  createdAt: string | null;
-}
-
-export interface StockMovementInput {
-  productId: string;
-  type: TransactionType;
-  quantity: number;
-  reason: string;
-  reference?: string;
-  notes?: string;
-}
-
-export interface UserProfile {
-  uid: string;
-  email: string;
-  displayName: string;
-  roleLabel: string;
-  facilityName: string;
-  createdAt: string | null;
-  updatedAt: string | null;
-}
-
-export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
-
-export function getStockStatus(product: Pick<Product, 'quantity' | 'minStock'>): StockStatus {
-  if (product.quantity <= 0) return 'out_of_stock';
-  if (product.quantity <= product.minStock) return 'low_stock';
-  return 'in_stock';
-}
-
 // =====================================================================================
 // 3. DATA MAPPERS (PostgreSQL snake_case <-> Application camelCase)
 // =====================================================================================
@@ -651,8 +568,8 @@ export function mapProductRowToProduct(row: Database['public']['Tables']['produc
     description: row.description ?? undefined,
     imageKey: row.image_key ?? undefined,
     storageLocation: row.storage_location ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toAppTimestamp(row.created_at),
+    updatedAt: toAppTimestamp(row.updated_at),
   };
 }
 
@@ -694,7 +611,7 @@ export function mapTransactionRowToTransaction(
     reason: row.reason,
     reference: row.reference ?? undefined,
     notes: row.notes ?? undefined,
-    createdAt: row.created_at,
+    createdAt: toAppTimestamp(row.created_at),
   };
 }
 
@@ -705,14 +622,19 @@ export function mapProfileRowToProfile(row: Database['public']['Tables']['profil
     displayName: row.display_name,
     roleLabel: row.role_label,
     facilityName: row.facility_name,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toAppTimestamp(row.created_at),
+    updatedAt: toAppTimestamp(row.updated_at),
   };
 }
 
 // =====================================================================================
 // 4. SUPABASE CLIENT INITIALIZATION
 // =====================================================================================
+
+function cleanUrl(raw: string): string {
+  if (!raw) return '';
+  return raw.trim().replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '');
+}
 
 function getSupabaseConfig(): { url: string; anonKey: string; serviceRoleKey?: string } {
   let url = '';
@@ -722,8 +644,8 @@ function getSupabaseConfig(): { url: string; anonKey: string; serviceRoleKey?: s
   // 1. Check Vite frontend environment (import.meta.env)
   try {
     if (typeof import.meta !== 'undefined' && import.meta && import.meta.env) {
-      url = String(import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL || '');
-      anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.SUPABASE_ANON_KEY || '');
+      url = cleanUrl(String(import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL || ''));
+      anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.SUPABASE_ANON_KEY || '').trim();
     }
   } catch (_e) {
     // import.meta not available
@@ -733,17 +655,17 @@ function getSupabaseConfig(): { url: string; anonKey: string; serviceRoleKey?: s
   try {
     const proc = typeof globalThis !== 'undefined' && (globalThis as any).process ? (globalThis as any).process : undefined;
     if (proc && proc.env) {
-      if (!url) url = String(proc.env.VITE_SUPABASE_URL || proc.env.SUPABASE_URL || '');
-      if (!anonKey) anonKey = String(proc.env.VITE_SUPABASE_ANON_KEY || proc.env.SUPABASE_ANON_KEY || '');
-      serviceRoleKey = proc.env.SUPABASE_SERVICE_ROLE_KEY ? String(proc.env.SUPABASE_SERVICE_ROLE_KEY) : undefined;
+      if (!url) url = cleanUrl(String(proc.env.VITE_SUPABASE_URL || proc.env.SUPABASE_URL || ''));
+      if (!anonKey) anonKey = String(proc.env.VITE_SUPABASE_ANON_KEY || proc.env.SUPABASE_ANON_KEY || '').trim();
+      serviceRoleKey = proc.env.SUPABASE_SERVICE_ROLE_KEY ? String(proc.env.SUPABASE_SERVICE_ROLE_KEY).trim() : undefined;
     }
   } catch (_e) {
     // process not available
   }
 
   // Format valid fallback URL to prevent createClient URL-parser exceptions
-  const defaultUrl = 'https://your-project.supabase.co';
-  const defaultAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_anon_key';
+  const defaultUrl = 'https://goemsmrwuisxqhzkczju.supabase.co';
+  const defaultAnonKey = 'sb_publishable_v27y5thSgUW6-VSRLcAsZQ_g6KI4S1b';
 
   const validUrl = url && (url.startsWith('http://') || url.startsWith('https://')) ? url : defaultUrl;
   const validAnonKey = anonKey || defaultAnonKey;
@@ -795,12 +717,14 @@ export async function signUpWithEmail(
   displayName?: string,
   facilityName?: string,
 ) {
+  const name = displayName?.trim() || email.split('@')[0];
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: {
-        displayName: displayName || email.split('@')[0],
+        full_name: name,
+        displayName: name,
         facilityName: facilityName || 'Apex Retail Outlet',
       },
     },
@@ -871,29 +795,37 @@ export async function resetPasswordForEmail(email: string) {
 // =====================================================================================
 
 export async function ensureUserProfile(user: {
-  id: string;
+  id?: string;
+  uid?: string;
   email?: string;
   user_metadata?: Record<string, unknown>;
+  displayName?: string;
 }): Promise<UserProfile> {
+  const userId = user.id || user.uid;
+  if (!userId) {
+    throw new Error('User ID is required to fetch or create user profile.');
+  }
+
   const { data: existing } = await supabase
     .from('profiles')
     .select('*')
-    .eq('id', user.id)
+    .eq('id', userId)
     .maybeSingle();
 
   if (existing) {
     return mapProfileRowToProfile(existing);
   }
 
-  const email = user.email || `${user.id.slice(0, 8)}@smartstock.local`;
+  const email = user.email || `${userId.slice(0, 8)}@smartstock.local`;
   const displayName =
-    (user.user_metadata?.displayName as string) ||
+    user.displayName ||
     (user.user_metadata?.full_name as string) ||
+    (user.user_metadata?.displayName as string) ||
     email.split('@')[0] ||
     'Operations Lead';
 
   const newProfile = {
-    id: user.id,
+    id: userId,
     email,
     display_name: displayName.slice(0, 80),
     role_label: 'Store Ops Lead',
@@ -1422,7 +1354,7 @@ export async function buildSupabaseInventoryContext(ownerId: string): Promise<Ai
 
     const prodTx = transactions.filter((t) => t.productId === p.id);
     const recentTx = prodTx.filter((t) => {
-      const time = t.createdAt ? new Date(t.createdAt).getTime() : 0;
+      const time = t.createdAt ? t.createdAt.toMillis() : 0;
       return time >= thirtyDaysAgo;
     });
 
@@ -1441,7 +1373,7 @@ export async function buildSupabaseInventoryContext(ownerId: string): Promise<Ai
       noMovement30DaysCount++;
     }
 
-    const lastMovementAt = prodTx.length > 0 && prodTx[0].createdAt ? prodTx[0].createdAt : null;
+    const lastMovementAt = prodTx.length > 0 && prodTx[0].createdAt ? prodTx[0].createdAt.toISOString() : null;
 
     return {
       id: p.id,
@@ -1468,7 +1400,7 @@ export async function buildSupabaseInventoryContext(ownerId: string): Promise<Ai
     quantity: t.quantity,
     resultingStock: t.resultingStock,
     reason: t.reason,
-    createdAt: t.createdAt,
+    createdAt: t.createdAt ? t.createdAt.toISOString() : null,
   }));
 
   return {

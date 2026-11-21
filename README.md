@@ -6,7 +6,7 @@ An AI-powered inventory management system that helps small retailers track stock
 Small businesses often run out of stock or overstock because they track inventory manually and notice problems too late.
 
 ## Features
-- Sign-up, login and logout
+- Sign-up, login and logout with Supabase Authentication (Email/Password & Google OAuth)
 - Product management: add, edit, delete, search
 - Stock in/out updates with a change history
 - Dashboard with total products, low-stock count and recent activity
@@ -17,7 +17,7 @@ Small businesses often run out of stock or overstock because they track inventor
 
 ## Tech Stack
 - Frontend: React, Vite, TypeScript
-- Backend/Database: [Firebase Firestore, Express server]
+- Backend/Database: Supabase (PostgreSQL, Row Level Security, Auth, Realtime) & Express server
 - AI: Google Gemini API
 - Built with: Google AI Studio, Stitch (UI design)
 
@@ -28,15 +28,14 @@ Small businesses often run out of stock or overstock because they track inventor
 <img width="1080" height="1600" alt="screen 8 reports" src="https://github.com/user-attachments/assets/1d4135b6-434e-4651-b1e5-1a5900533bb1" />
 <img width="1048" height="1600" alt="screen 9 ai assistant" src="https://github.com/user-attachments/assets/8c996083-acbc-480c-a745-c4c64c98c4c8" />
 
-
-
-
-
+## Database Setup (Supabase)
+1. Open the [Supabase Dashboard](https://supabase.com/dashboard) and navigate to the **SQL Editor**.
+2. Run the SQL script from `supabase/query.sql` to initialize all tables (`profiles`, `products`, `stock_transactions`), Row Level Security policies, indexes, and triggers.
 
 ## How to Run
 1. Clone the repo
 2. Run `npm install`
-3. Copy `.env.example` to `.env` and add your own keys
+3. Copy `.env.example` to `.env` and configure your Supabase URL & anon key
 4. Run `npm run dev`
 
 ## Author

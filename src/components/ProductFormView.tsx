@@ -244,7 +244,7 @@ export const ProductFormView: React.FC<ProductFormViewProps> = ({
             <span>
               <strong className="text-slate-900">Catalog Validation Active:</strong> Fields marked
               with <span className="text-red-600 font-semibold">*</span> are required before saving
-              to Cloud Firestore.
+              to Supabase.
             </span>
           </div>
         </div>
@@ -756,7 +756,7 @@ export const ProductFormView: React.FC<ProductFormViewProps> = ({
             )
           ) : (
             <span className="text-xs text-slate-500">
-              All changes are persisted directly to Cloud Firestore.
+              All changes are persisted directly to Supabase.
             </span>
           )}
         </div>

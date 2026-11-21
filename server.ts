@@ -110,7 +110,7 @@ async function startServer() {
         '4. Keep answers clear, concise, and practical for store operations. Use bullet points or short tables when listing multiple SKUs.',
         '5. Always cite exact SKUs and unit counts when referencing products.',
         '',
-        'LIVE DATABASE CONTEXT (Firestore snapshot):',
+        'LIVE DATABASE CONTEXT (Supabase PostgreSQL snapshot):',
         JSON.stringify(inventoryContext),
       ].join('\n');
 

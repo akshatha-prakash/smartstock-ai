@@ -1,10 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  onAuthStateChanged,
-  sendEmailVerification,
-  signOut,
-  User,
-} from 'firebase/auth';
 import { MailCheck, RefreshCw } from 'lucide-react';
 import { AiAssistantView } from './components/AiAssistantView';
 import { DashboardView } from './components/DashboardView';
@@ -17,7 +11,7 @@ import { ReportsView } from './components/ReportsView';
 import { Sidebar } from './components/Sidebar';
 import { StockTransactionsView } from './components/StockTransactionsView';
 import { TopBar } from './components/TopBar';
-import { auth } from './lib/firebase';
+import { supabase } from '../supabase/supabase';
 import {
   ensureUserProfile,
   subscribeToProducts,
@@ -32,9 +26,40 @@ import {
   UserProfile,
 } from './types/inventory';
 
+interface AppUser {
+  id: string;
+  uid: string;
+  email?: string;
+  displayName?: string;
+  photoURL?: string | null;
+  emailVerified: boolean;
+}
+
+function adaptSupabaseUser(sbUser: any): AppUser | null {
+  if (!sbUser) return null;
+  const meta = sbUser.user_metadata || {};
+  const isVerified = Boolean(
+    sbUser.email_confirmed_at ||
+    sbUser.confirmed_at ||
+    meta.email_verified === true
+  );
+  return {
+    id: sbUser.id,
+    uid: sbUser.id,
+    email: sbUser.email,
+    displayName:
+      meta.full_name ||
+      meta.displayName ||
+      sbUser.email?.split('@')[0] ||
+      'Operations Lead',
+    photoURL: meta.avatar_url || meta.picture || null,
+    emailVerified: isVerified,
+  };
+}
+
 function SmartStockWorkspace() {
   const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<StockTransaction[]>([]);
@@ -51,23 +76,33 @@ function SmartStockWorkspace() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
 
-  // Throw listener errors into ErrorBoundary if Firestore denies access
   if (listenerError) {
     throw listenerError;
   }
 
+  // Persistent login session and reactive auth changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(adaptSupabaseUser(session?.user));
       setAuthReady(true);
-      if (!firebaseUser) {
+    }).catch(() => {
+      setAuthReady(true);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(adaptSupabaseUser(session?.user));
+      setAuthReady(true);
+      if (!session?.user) {
         setProfile(null);
         setProducts([]);
         setTransactions([]);
         setDataLoading(false);
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -145,7 +180,11 @@ function SmartStockWorkspace() {
   };
 
   const handleSignOut = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    setProducts([]);
+    setTransactions([]);
     setCurrentPage('dashboard');
     setSearchQuery('');
   };
@@ -176,7 +215,7 @@ function SmartStockWorkspace() {
           </div>
           <h1 className="text-xl font-bold text-slate-900">Verify your email address</h1>
           <p className="text-sm text-slate-600">
-            We sent a verification link to <strong>{user.email}</strong>. Please confirm your email before accessing Cloud Firestore inventory records.
+            We sent a verification link to <strong>{user.email}</strong>. Please confirm your email before accessing inventory records.
           </p>
           {verificationSent && (
             <p className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
@@ -187,11 +226,12 @@ function SmartStockWorkspace() {
             <button
               type="button"
               onClick={async () => {
-                await user.reload();
-                setUser(auth.currentUser ? { ...auth.currentUser } : null);
-                window.location.reload();
+                const { data } = await supabase.auth.getUser();
+                if (data?.user) {
+                  setUser(adaptSupabaseUser(data.user));
+                }
               }}
-              className="w-full py-2.5 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5E] text-white text-xs font-semibold flex items-center justify-center gap-2"
+              className="w-full py-2.5 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5E] text-white text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
               <span>I&apos;ve Verified — Continue</span>
@@ -199,17 +239,22 @@ function SmartStockWorkspace() {
             <button
               type="button"
               onClick={async () => {
-                await sendEmailVerification(user);
-                setVerificationSent(true);
+                if (user.email) {
+                  await supabase.auth.resend({
+                    type: 'signup',
+                    email: user.email,
+                  });
+                  setVerificationSent(true);
+                }
               }}
-              className="w-full py-2.5 px-4 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700"
+              className="w-full py-2.5 px-4 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer"
             >
               Resend Verification Email
             </button>
             <button
               type="button"
               onClick={handleSignOut}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-800 pt-1"
+              className="text-xs font-semibold text-slate-500 hover:text-slate-800 pt-1 cursor-pointer"
             >
               Sign out &amp; use another account
             </button>

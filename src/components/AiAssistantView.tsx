@@ -121,7 +121,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            Ask questions about stock levels, reorder priorities, and 30-day movement using your live Cloud Firestore data
+            Ask questions about stock levels, reorder priorities, and 30-day movement using your live Supabase data
           </p>
         </div>
 
@@ -179,7 +179,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                   <span className="text-[11px] text-slate-400">Live Context</span>
                 </div>
                 <p className="text-sm text-slate-700 leading-relaxed">
-                  Hello {userName}. I am connected to your live Cloud Firestore database with{' '}
+                  Hello {userName}. I am connected to your live Supabase database with{' '}
                   <strong>{context.summary.totalProducts} active SKUs</strong> and{' '}
                   <strong>{transactions.length} recorded stock transactions</strong>. Every answer I provide is grounded strictly in your real inventory records.
                 </p>
@@ -251,7 +251,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                   <Bot className="w-4 h-4 animate-pulse" />
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium text-slate-500">
-                  Analyzing live Firestore inventory records...
+                  Analyzing live Supabase inventory records...
                 </div>
               </div>
             )}
@@ -307,7 +307,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                 Live Database Context
               </h2>
               <span className="px-2 py-0.5 rounded bg-slate-100 text-[11px] font-semibold text-slate-700">
-                Firestore
+                Supabase
               </span>
             </div>
 
